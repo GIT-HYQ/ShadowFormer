@@ -121,7 +121,7 @@ class DataLoaderVal(Dataset):
 
 class DataLoaderTest(Dataset):
     def __init__(self, rgb_dir, target_transform=None):
-        super(DataLoaderVal, self).__init__()
+        super(DataLoaderTest, self).__init__()
 
         self.target_transform = target_transform
 

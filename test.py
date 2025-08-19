@@ -12,7 +12,7 @@ import torch.nn.functional as F
 # from ptflops import get_model_complexity_info
 
 import scipy.io as sio
-from utils.loader import get_validation_data
+from utils.loader import get_test_data
 import utils
 import cv2
 from model import UNet
@@ -58,7 +58,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
 
 utils.mkdir(args.result_dir)
 
-test_dataset = get_validation_data(args.input_dir)
+test_dataset = get_test_data(args.input_dir)
 test_loader = DataLoader(dataset=test_dataset, batch_size=1, shuffle=False, num_workers=8, drop_last=False)
 
 model_restoration = utils.get_arch(args)
