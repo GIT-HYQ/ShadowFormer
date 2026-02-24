@@ -14,7 +14,7 @@ class Options():
         parser.add_argument('--nepoch', type=int, default=500, help='training epochs')
         parser.add_argument('--train_workers', type=int, default=0, help='train_dataloader workers')
         parser.add_argument('--eval_workers', type=int, default=8, help='eval_dataloader workers')
-        parser.add_argument('--dataset', type=str, default='ISTD')
+        parser.add_argument('--dataset', type=str, default='CAG')
         parser.add_argument('--pretrain_weights', type=str, default='./log/model_best.pth',
                             help='path of pretrained_weights')
         parser.add_argument('--optimizer', type=str, default='adamw', help='optimizer for training')

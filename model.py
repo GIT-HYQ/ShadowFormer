@@ -12,6 +12,7 @@ from torch import einsum
 import cv2
 import scipy.misc
 import utils
+from adative_noise_layer import AdaptiveNoiseModule
 #########################################
 class ConvBlock(nn.Module):
     def __init__(self, in_channel, out_channel, strides=1):
@@ -1092,6 +1093,14 @@ class ShadowFormer(nn.Module):
                             norm_layer=norm_layer,
                             use_checkpoint=use_checkpoint,
                             token_projection=token_projection,token_mlp=token_mlp,se_layer=se_layer,cab=True)
+        
+        # embed_dim * 8 是你 Bottleneck 层的通道数 (针对 depths[4] 层)
+        self.adaptive_noise = AdaptiveNoiseModule(
+            feat_dim=embed_dim * 8, 
+            max_alpha=0.0005, 
+            max_beta=0.0005
+        )
+
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -1158,5 +1167,32 @@ class ShadowFormer(nn.Module):
         deconv2 = self.decoderlayer_2(deconv2, xm, mask=mask, img_size = self.img_size)
 
         # Output Projection
-        y = self.output_proj(deconv2, img_size = self.img_size) + x
-        return y
+        # y = self.output_proj(deconv2, img_size = self.img_size) + x
+        # 1. 得到投影后的“干净”背景
+        clean_bg = self.output_proj(deconv2, img_size=self.img_size) + x
+
+        # 2. 调用自适应噪声注入 (使用瓶颈层 conv3 的特征)
+        # 注意：此处 xm 是输入的血管分布图
+        final_y, noise_params = self.adaptive_noise(
+            x_bg=clean_bg, 
+            bottleneck_feat=conv3, 
+            mask=xm,
+            noise_grain=0.05
+        )
+
+        # 3. 训练与推理的返回逻辑
+        if self.training:
+            # clean_bg 用于和 GT 算 L1 Loss (保证去血管准确)
+            # final_y 用于和 GT 算 GAN Loss (保证纹理真实)
+            return final_y, clean_bg, noise_params
+        
+        return final_y, clean_bg
+    
+
+    def get_final_y(self, clean_bg, alpha, beta, mask):
+        """
+        供训练阶段调用：使用特定的 alpha/beta 和 背景图重新合成
+        支持 clean_bg.detach() 传入以截断梯度
+        """
+        # 直接调用 noise_module 内部的合成逻辑，但不经过其分支预测
+        return self.adaptive_noise.synthesize(clean_bg, alpha, beta, mask)

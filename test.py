@@ -27,7 +27,7 @@ parser.add_argument('--input_dir', default='../ISTD_Dataset/test/',
     type=str, help='Directory of validation images')
 parser.add_argument('--result_dir', default='./results/',
     type=str, help='Directory for results')
-parser.add_argument('--weights', default='./log/ShadowFormer_istd/models/model_best.pth',
+parser.add_argument('--weights', default='./log/ShadowFormer/models/model_best.pth',
     type=str, help='Path to weights')
 parser.add_argument('--gpus', default='0', type=str, help='CUDA_VISIBLE_DEVICES')
 parser.add_argument('--arch', default='ShadowFormer', type=str, help='arch')
@@ -135,9 +135,9 @@ with torch.no_grad():
             # calculate SSIM in gray space
             gray_restored = cv2.cvtColor(rgb_restored, cv2.COLOR_RGB2GRAY)
             gray_gt = cv2.cvtColor(rgb_gt, cv2.COLOR_RGB2GRAY)
-            ssim_val_rgb.append(ssim_loss(gray_restored, gray_gt, channel_axis=None))
-            ssim_val_ns.append(ssim_loss(gray_restored * (1 - bm.squeeze()), gray_gt * (1 - bm.squeeze()), channel_axis=None))
-            ssim_val_s.append(ssim_loss(gray_restored * bm.squeeze(), gray_gt * bm.squeeze(), channel_axis=None))
+            ssim_val_rgb.append(ssim_loss(gray_restored, gray_gt, channel_axis=None, data_range=1.0))
+            ssim_val_ns.append(ssim_loss(gray_restored * (1 - bm.squeeze()), gray_gt * (1 - bm.squeeze()), channel_axis=None, data_range=1.0))
+            ssim_val_s.append(ssim_loss(gray_restored * bm.squeeze(), gray_gt * bm.squeeze(), channel_axis=None, data_range=1.0))
 
             psnr_val_rgb.append(psnr_loss(rgb_restored, rgb_gt))
             psnr_val_ns.append(psnr_loss(rgb_restored * (1 - bm), rgb_gt * (1 - bm)))
