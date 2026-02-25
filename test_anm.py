@@ -1,4 +1,3 @@
-
 import numpy as np
 import os,sys
 import argparse
@@ -23,6 +22,8 @@ from skimage import img_as_float32, img_as_ubyte
 from skimage.metrics import peak_signal_noise_ratio as psnr_loss
 from skimage.metrics import structural_similarity as ssim_loss
 from sklearn.metrics import mean_squared_error as mse_loss
+
+import datetime
 
 parser = argparse.ArgumentParser(description='RGB denoising evaluation on the validation set of SIDD')
 parser.add_argument('--input_dir', default='../ISTD_Dataset/test/',
@@ -115,6 +116,27 @@ os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
 
 utils.mkdir(args.result_dir)
 
+# 新增：日志文件（保存到 --result_dir）
+log_file = os.path.join(
+    args.result_dir,
+    f"test_log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+)
+
+def log(msg=""):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(str(msg) + "\n")
+
+# 记录启动信息
+with open(log_file, "w", encoding="utf-8") as f:
+    f.write("=== Test Start ===\n")
+    f.write(f"time: {datetime.datetime.now()}\n")
+    f.write(f"input_dir: {args.input_dir}\n")
+    f.write(f"result_dir: {args.result_dir}\n")
+    f.write(f"weights: {args.weights}\n")
+    f.write(f"arch: {args.arch}\n")
+    f.write(f"anm: {args.anm}\n\n")
+
 test_dataset = get_test_data(args.input_dir)
 test_loader = DataLoader(dataset=test_dataset, batch_size=1, shuffle=False, num_workers=8, drop_last=False)
 
@@ -124,7 +146,7 @@ model_restoration = utils.get_arch(args)
 model_restoration = torch.nn.DataParallel(model_restoration)
 
 utils.load_checkpoint(model_restoration, args.weights)
-print("===>Testing using weights: ", args.weights)
+log(f"===>Testing using weights: {args.weights}")
 
 model_restoration.cuda()
 model_restoration.eval()
@@ -185,16 +207,16 @@ def append_metric_store(store, pack):
         store[k].append(v)
 
 def print_metric_store(title, store):
-    print(title)
-    print("PSNR: %f, SSIM: %f, RMSE: %f " % (
+    log(title)
+    log("PSNR: %f, SSIM: %f, RMSE: %f " % (
         np.mean(store["psnr"]), np.mean(store["ssim"]), np.mean(store["rmse"])))
-    print("SPSNR: %f, SSSIM: %f, SRMSE: %f " % (
+    log("SPSNR: %f, SSSIM: %f, SRMSE: %f " % (
         np.mean(store["spsnr"]), np.mean(store["sssim"]), np.mean(store["srmse"])))
-    print("NSPSNR: %f, NSSSIM: %f, NSRMSE: %f " % (
+    log("NSPSNR: %f, NSSSIM: %f, NSRMSE: %f " % (
         np.mean(store["nspsnr"]), np.mean(store["nsssim"]), np.mean(store["nsrmse"])))
-    print("KL: %f, SKL: %f, NSKL: %f " % (
+    log("KL: %f, SKL: %f, NSKL: %f " % (
         np.mean(store["kl"]), np.mean(store["skl"]), np.mean(store["nskl"])))
-    print("PSD: %f, SPSD: %f, NSPSD: %f " % (
+    log("PSD: %f, SPSD: %f, NSPSD: %f " % (
         np.mean(store["psd"]), np.mean(store["spsd"]), np.mean(store["nspsd"]))
     )
 
@@ -277,3 +299,4 @@ if args.cal_metrics:
     print_metric_store("=== Restored Metrics ===", metric_main)
     if args.anm and len(metric_anm["psnr"]) > 0:
         print_metric_store("=== rgb_res_noisy Metrics ===", metric_anm)
+    log(f"Log saved to: {log_file}")
