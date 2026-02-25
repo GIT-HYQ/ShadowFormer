@@ -958,7 +958,7 @@ class ShadowFormer(nn.Module):
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, patch_norm=True,
                  use_checkpoint=False, token_projection='linear', token_mlp='leff', se_layer=True,
-                 dowsample=Downsample, upsample=Upsample, **kwargs):
+                 dowsample=Downsample, upsample=Upsample, anm=False, **kwargs):
         super().__init__()
 
         self.num_enc_layers = len(depths)//2
@@ -971,6 +971,7 @@ class ShadowFormer(nn.Module):
         self.win_size =win_size
         self.reso = img_size
         self.pos_drop = nn.Dropout(p=drop_rate)
+        self.anm = anm
 
         # stochastic depth
         enc_dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths[:self.num_enc_layers]))]
@@ -1094,12 +1095,13 @@ class ShadowFormer(nn.Module):
                             use_checkpoint=use_checkpoint,
                             token_projection=token_projection,token_mlp=token_mlp,se_layer=se_layer,cab=True)
         
-        # embed_dim * 8 是你 Bottleneck 层的通道数 (针对 depths[4] 层)
-        self.adaptive_noise = AdaptiveNoiseModule(
-            feat_dim=embed_dim * 8, 
-            max_alpha=0.0005, 
-            max_beta=0.0005
-        )
+        if self.anm:
+            # embed_dim * 8 是你 Bottleneck 层的通道数 (针对 depths[4] 层)
+            self.adaptive_noise = AdaptiveNoiseModule(
+                feat_dim=embed_dim * 8, 
+                max_alpha=0.0005, 
+                max_beta=0.0005
+            )
 
         self.apply(self._init_weights)
 
@@ -1167,26 +1169,22 @@ class ShadowFormer(nn.Module):
         deconv2 = self.decoderlayer_2(deconv2, xm, mask=mask, img_size = self.img_size)
 
         # Output Projection
-        # y = self.output_proj(deconv2, img_size = self.img_size) + x
-        # 1. 得到投影后的“干净”背景
-        clean_bg = self.output_proj(deconv2, img_size=self.img_size) + x
+        y = self.output_proj(deconv2, img_size = self.img_size) + x
 
-        # 2. 调用自适应噪声注入 (使用瓶颈层 conv3 的特征)
-        # 注意：此处 xm 是输入的血管分布图
-        final_y, noise_params = self.adaptive_noise(
-            x_bg=clean_bg, 
-            bottleneck_feat=conv3, 
-            mask=xm,
-            noise_grain=0.05
-        )
-
-        # 3. 训练与推理的返回逻辑
-        if self.training:
-            # clean_bg 用于和 GT 算 L1 Loss (保证去血管准确)
-            # final_y 用于和 GT 算 GAN Loss (保证纹理真实)
-            return final_y, clean_bg, noise_params
-        
-        return final_y, clean_bg
+        if self.anm:
+            # 2. 调用自适应噪声注入 (使用瓶颈层 conv3 的特征)
+            # 注意：此处 xm 是输入的血管分布图
+            final_y, noise_params = self.adaptive_noise(
+                x_bg=y, 
+                bottleneck_feat=conv3, 
+                mask=xm,
+                noise_grain=0.05
+            )
+            if self.training:
+                return final_y, y, noise_params
+            return final_y, y
+      
+        return y
     
 
     def get_final_y(self, clean_bg, alpha, beta, mask):

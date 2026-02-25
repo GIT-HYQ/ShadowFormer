@@ -63,7 +63,7 @@ torch.manual_seed(1234)
 torch.cuda.manual_seed_all(1234)
 
 
-
+opt.arch = opt.arch+'_anm'  # 强制使用带 ANM 的模型版本
 ######### Model ###########
 model_restoration = utils.get_arch(opt)
 
