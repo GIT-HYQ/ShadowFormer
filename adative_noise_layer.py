@@ -122,7 +122,7 @@ class CoordAtt(nn.Module):
 
         return identity * a_h * a_w
 
-class AdaptiveNoiseModule(nn.Module):
+class AdaptiveNoiseModule1(nn.Module):
     def __init__(self, feat_dim, max_alpha=0.00015, max_beta=0.00015):
         super().__init__()
         self.max_alpha = max_alpha
@@ -224,3 +224,135 @@ class AdaptiveNoiseModule(nn.Module):
         
         # 5. 合成
         return x_bg + (noise * sigma) * mask_soft
+
+
+class AdaptiveNoiseModule(nn.Module):
+    def __init__(self, feat_dim, max_alpha=0.00015, max_beta=0.00015):
+        super().__init__()
+        self.max_alpha = max_alpha
+        self.max_beta = max_beta
+
+        # 1. 坐标注意力
+        self.attention = CoordAtt(feat_dim, feat_dim)
+
+        # 2. 解耦头
+        input_dim = feat_dim * 2 
+        self.shared_net = nn.Sequential(
+            nn.Linear(input_dim, feat_dim // 2),
+            nn.LayerNorm(feat_dim // 2),
+            nn.GELU()
+        )
+        self.alpha_head = nn.Linear(feat_dim // 2, 1)
+        self.beta_head = nn.Linear(feat_dim // 2, 1)
+
+        nn.init.constant_(self.alpha_head.bias, 1.0) 
+        nn.init.constant_(self.beta_head.bias, 1.0)
+
+    def forward(self, x_bg, bottleneck_feat, mask, noise_grain=0.05):
+        """
+        x_bg: [B, 3, H, W] 输入是 3 通道
+        """
+        # --- 步骤 A: 维度适配 (3D Sequence 转 4D Map) ---
+        if bottleneck_feat.dim() == 3:
+            B, L, C = bottleneck_feat.shape
+            # 假设特征图是正方形，还原为 2D 结构
+            H_f = W_f = int(L ** 0.5) 
+            feat_4d = bottleneck_feat.transpose(1, 2).view(B, C, H_f, W_f)
+        else:
+            B, C, H_f, W_f = bottleneck_feat.shape
+            feat_4d = bottleneck_feat
+
+        # --- 步骤 B: SOTA 注意力增强 ---
+        # 使用坐标注意力捕捉血管的空间位置信息
+        enhanced_feat = self.attention(feat_4d)
+
+        # --- 步骤 C: 掩膜引导的特征池化 (考虑血管周围) ---
+        # 1. 将 Mask 下采样到特征图尺寸
+        mask_down = F.interpolate(mask, size=(H_f, W_f), mode='bilinear', align_corners=False)
+        
+        # 2. 空间扩张：通过 MaxPool 模拟膨胀，包含血管边缘及背景
+        mask_dilated = F.max_pool2d(mask_down, kernel_size=3, stride=1, padding=1)
+        
+        # 3. 特征聚合权重的软化 (小尺度)
+        mask_pool_soft = gaussian_blur(mask_dilated, kernel_size=(3, 3), sigma=1.0)
+        
+        # 4. 加权特征聚合：仅提取血管及其邻域的噪声相关特征
+        # 计算公式: sum(feat * w) / sum(w)
+        feat_masked = enhanced_feat * mask_pool_soft
+
+        # --- 步骤 D: 物理参数预测 ---
+        # 改进的特征聚合 (Mean + Max)
+        f_mean = torch.sum(feat_masked, dim=(2, 3)) / (torch.sum(mask_pool_soft, dim=(2, 3)) + 1e-6)
+        f_max = torch.amax(feat_masked, dim=(2, 3))
+        f_combined = torch.cat([f_mean, f_max], dim=-1)
+
+        # --- 步骤 D: 物理参数预测 ---
+        # 即使输入是 3 通道，alpha 和 beta 依然是标量参数 [B, 1, 1, 1]
+        shared = self.shared_net(f_combined)
+        
+        min_alpha = self.max_alpha * 0.2 
+        min_beta = self.max_beta * 0.2
+
+        alpha = (torch.sigmoid(self.alpha_head(shared)) * (self.max_alpha - min_alpha) + min_alpha).view(-1, 1, 1, 1)
+        beta = (torch.sigmoid(self.beta_head(shared)) * (self.max_beta - min_beta) + min_beta).view(-1, 1, 1, 1)
+        
+        # --- 步骤 E: 执行物理合成 ---
+        # 核心逻辑：在 synthesize 内部处理 3 通道广播
+        noisy_output = self.synthesize(x_bg, alpha, beta, mask, noise_grain)
+        
+        return noisy_output, (alpha, beta)
+
+    def synthesize0(self, x_bg, alpha, beta, mask, noise_grain=0.05):
+        """
+        核心逻辑：生成单通道随机噪声，强制广播到 3 通道输入上
+        """
+        B, C, H, W = x_bg.shape
+        
+        # 1. 物理方差计算 (此时 variance 为 [B, 3, H, W])
+        variance = alpha * x_bg + beta
+        sigma = torch.sqrt(torch.clamp(variance, min=1e-7))
+        
+        # 2. 【关键】生成严格的单通道随机噪声 [B, 1, H, W]
+        # 这样可以确保随机波动的“形态”在 R/G/B 上完全一致
+        noise_gray = torch.randn(B, 1, H, W).to(x_bg.device)
+        
+        # 3. 模拟颗粒感 (在单通道上处理，效率更高)
+        if noise_grain > 0:
+            noise_gray = gaussian_blur(noise_gray, kernel_size=(7, 7), sigma=noise_grain)
+            noise_gray = noise_gray * 1.5 
+
+        # 4. 掩膜软化 [B, 1, H, W]
+        mask_soft = gaussian_blur(mask, kernel_size=(21, 21), sigma=5.0)
+        
+        # 5. 【广播合成】
+        # noise_gray [B, 1, H, W] 会自动广播适配 x_bg [B, 3, H, W]
+        # 这保证了每个通道增加的噪声在每个像素点上数值完全相同
+        res_noisy = x_bg + (noise_gray * sigma) * mask_soft
+        
+        return res_noisy
+    
+
+    # 将 beta 也纳入掩膜控制（物理最合理）修改物理公式，让底噪也只在血管及其邻域产生
+    # 避免NSPSNR过低，同时保持背景区域的干净
+    def synthesize(self, x_bg, alpha, beta, mask, noise_grain=0.05):
+        B, C, H, W = x_bg.shape
+        
+        # 1. 软化掩膜
+        mask_soft = gaussian_blur(mask, kernel_size=(15, 15), sigma=3.0)
+        
+        # 2. 物理方差计算：将 mask 整合进方差，确保背景 variance 极小
+        # 这样 alpha * x_bg 和基础底噪 beta 都不会溢出到远端背景
+        variance = (alpha * x_bg + beta) * mask_soft
+        sigma = torch.sqrt(torch.clamp(variance, min=1e-7))
+        
+        # 3. 生成单通道噪声
+        noise_gray = torch.randn(B, 1, H, W).to(x_bg.device)
+        if noise_grain > 0:
+            noise_gray = gaussian_blur(noise_gray, kernel_size=(7, 7), sigma=noise_grain)
+            noise_gray = noise_gray * 1.5 
+        
+        # 4. 广播合成
+        # 此时 sigma 已经包含了 mask 信息，背景处的 sigma 接近 0
+        res_noisy = x_bg + (noise_gray * sigma)
+        
+        return res_noisy
