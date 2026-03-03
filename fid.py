@@ -182,9 +182,14 @@ def calculate_fid_kid_metrics(path_gen, path_gt, path_mask=None, device="cuda"):
 
 if __name__ == "__main__":
     metrics = calculate_fid_kid_metrics(
-        path_gen="./results/fid_gen",
-        path_gt="./results/fid_gt",
-        path_mask="./results/mask",  # 可设为 None
+        # path_gen="/home/share/clr/share/work/CAGSubtraction/ShadowFormer/exp/anm",
+        # path_gen="/home/share/clr/share/work/CAGSubtraction/ShadowFormer/exp/anm_gray",
+        path_gen="/home/share/clr/share/work/CAGSubtraction/ShadowFormer/exp/anm_gray_ns4",        
+        # path_gen="/home/share/clr/share/work/CAGSubtraction/ShadowFormer/exp/baseline",
+        # path_gen="/home/share/clr/share/work/CAGSubtraction/ShadowDiffusion/output/res_v2/results512",
+        path_gt="/home/share/clr/share/data/cag_res_v2/test/test_C",
+        path_mask="/home/share/clr/share/data/cag_res_v2/test/test_B",  # 可设为 None
         device="cuda"
     )
+
     print(metrics)

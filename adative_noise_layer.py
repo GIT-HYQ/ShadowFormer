@@ -334,7 +334,7 @@ class AdaptiveNoiseModule(nn.Module):
 
     # 将 beta 也纳入掩膜控制（物理最合理）修改物理公式，让底噪也只在血管及其邻域产生
     # 避免NSPSNR过低，同时保持背景区域的干净
-    def synthesize(self, x_bg, alpha, beta, mask, noise_grain=0.05):
+    def synthesize1(self, x_bg, alpha, beta, mask, noise_grain=0.05):
         B, C, H, W = x_bg.shape
         
         # 1. 软化掩膜
@@ -354,5 +354,63 @@ class AdaptiveNoiseModule(nn.Module):
         # 4. 广播合成
         # 此时 sigma 已经包含了 mask 信息，背景处的 sigma 接近 0
         res_noisy = x_bg + (noise_gray * sigma)
+        
+        return res_noisy
+
+    def synthesize2(self, x_bg, alpha, beta, mask, noise_grain=0.05):
+        """
+        零干扰合成逻辑：强制保留 x_bg 原始背景，仅在血管内部注入噪声。
+        """
+        B, C, H, W = x_bg.shape
+        
+        # 1. 软化掩膜用于平滑过渡（防止血管边缘出现生硬的切痕）
+        # 注意：此处的模糊仅用于控制噪声强度的空间分布，不改变背景的归属
+        mask_soft = gaussian_blur(mask, kernel_size=(15, 15), sigma=3.0)
+        
+        # 2. 仅计算血管区域的物理方差
+        # 此时 variance 即使在背景处有极小残留也没关系，因为后面有硬截断
+        variance = (alpha * x_bg + beta) * mask_soft
+        sigma = torch.sqrt(torch.clamp(variance, min=1e-7))
+        
+        # 3. 生成噪声分量 (单通道广播)
+        noise_gray = torch.randn(B, 1, H, W).to(x_bg.device)
+        if noise_grain > 0:
+            noise_gray = gaussian_blur(noise_gray, kernel_size=(7, 7), sigma=noise_grain)
+            noise_gray = noise_gray * 1.5 
+        
+        # 4. 【核心截断逻辑】：背景保留门控
+        # 只有在二值 mask > 0 的地方才允许加法项存在
+        # 这保证了背景像素在计算后与输入 x_bg 完全相等（PSNR 理论上无穷大）
+        noise_increment = (noise_gray * sigma) * (mask > 0).float()
+        
+        # 5. 合成输出
+        res_noisy = x_bg + noise_increment
+        
+        return res_noisy
+
+    # 根据最早的notebook脚本调整
+    def synthesize(self, x_bg, alpha, beta, mask, noise_grain=0.05):
+        # 1. 计算 sigma
+        variance = alpha * x_bg + beta
+        sigma = torch.sqrt(torch.clamp(variance, min=1e-7))
+        
+        # 2. 生成颗粒噪声
+        noise = torch.randn_like(x_bg[:, :1, :, :])
+        if noise_grain > 0:
+            # 模拟 CV2 的高斯模糊
+            noise = gaussian_blur(noise, kernel_size=(7, 7), sigma=noise_grain)
+            noise = noise * 1.4 # 关键补偿
+            
+        # 3. 仿照最早脚本的混合逻辑 (插值混合)
+        # 软化 mask 用于混合
+        mask_soft = gaussian_blur(mask, kernel_size=(15, 15), sigma=3.0)
+        
+        # noisy_patch 就是 img_f + noise * sigma
+        # 然后使用 Lerp 公式: img_f * (1 - M) + noisy_patch * M
+        # 简化后其实就是: x_bg + (noise * sigma) * mask_soft
+        
+        # 为了保证背景绝对干净，最后加一步二值门控
+        noise_increment = (noise * sigma) * mask_soft
+        res_noisy = x_bg + noise_increment * (mask > 0).float()
         
         return res_noisy

@@ -293,7 +293,10 @@ with torch.no_grad():
                 append_metric_store(metric_anm, eval_metric_pack(rgb_res_noisy, rgb_gt, rgb_noisy_np, bm))
 
         if args.save_images:
-            utils.save_img(rgb_restored*255.0, os.path.join(args.result_dir, filenames[0]))
+            if args.anm:
+                utils.save_img(rgb_res_noisy*255.0, os.path.join(args.result_dir, filenames[0]))
+            else:
+                utils.save_img(rgb_restored*255.0, os.path.join(args.result_dir, filenames[0]))
 
 if args.cal_metrics:
     print_metric_store("=== Restored Metrics ===", metric_main)
