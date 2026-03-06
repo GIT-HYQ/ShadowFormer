@@ -54,6 +54,7 @@ parser.add_argument('--train_ps', type=int, default=320, help='patch size of tra
 parser.add_argument('--tile', type=int, default=None, help='Tile size (e.g 720). None means testing on the original resolution image')
 parser.add_argument('--tile_overlap', type=int, default=32, help='Overlapping of different tiles')
 parser.add_argument('--anm', action='store_true', default=False, help='adaptive noise module')
+parser.add_argument('--no_log', action='store_true', default=False, help='do not log to file')
 args = parser.parse_args()
 
 
@@ -117,25 +118,28 @@ os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
 utils.mkdir(args.result_dir)
 
 # 新增：日志文件（保存到 --result_dir）
-log_file = os.path.join(
-    args.result_dir,
-    f"test_log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-)
+if not args.no_log:
+    log_file = os.path.join(
+        args.result_dir,
+        f"test_log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    )
 
 def log(msg=""):
     print(msg)
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(str(msg) + "\n")
+    if not args.no_log:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(str(msg) + "\n")
 
 # 记录启动信息
-with open(log_file, "w", encoding="utf-8") as f:
-    f.write("=== Test Start ===\n")
-    f.write(f"time: {datetime.datetime.now()}\n")
-    f.write(f"input_dir: {args.input_dir}\n")
-    f.write(f"result_dir: {args.result_dir}\n")
-    f.write(f"weights: {args.weights}\n")
-    f.write(f"arch: {args.arch}\n")
-    f.write(f"anm: {args.anm}\n\n")
+if not args.no_log:
+    with open(log_file, "w", encoding="utf-8") as f:
+        f.write("=== Test Start ===\n")
+        f.write(f"time: {datetime.datetime.now()}\n")
+        f.write(f"input_dir: {args.input_dir}\n")
+        f.write(f"result_dir: {args.result_dir}\n")
+        f.write(f"weights: {args.weights}\n")
+        f.write(f"arch: {args.arch}\n")
+        f.write(f"anm: {args.anm}\n\n")
 
 test_dataset = get_test_data(args.input_dir)
 test_loader = DataLoader(dataset=test_dataset, batch_size=1, shuffle=False, num_workers=8, drop_last=False)
@@ -302,4 +306,5 @@ if args.cal_metrics:
     print_metric_store("=== Restored Metrics ===", metric_main)
     if args.anm and len(metric_anm["psnr"]) > 0:
         print_metric_store("=== rgb_res_noisy Metrics ===", metric_anm)
-    log(f"Log saved to: {log_file}")
+    if not args.no_log:
+        log(f"Log saved to: {log_file}")
